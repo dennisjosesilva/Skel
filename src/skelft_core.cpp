@@ -5,7 +5,7 @@
 #include <stack>
 #include <vector>
 #include <iostream>
-#include "include/genrl.h"
+#include "genrl.h"
 
 using namespace std;
 
