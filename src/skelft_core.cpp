@@ -5,7 +5,8 @@
 #include <stack>
 #include <vector>
 #include <iostream>
-#include "genrl.h"
+#include "genrl.h"  // "include" directories is defines in cmake, so we can include 
+                    // this header directly.
 
 using namespace std;
 

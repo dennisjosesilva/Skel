@@ -14,8 +14,10 @@ class Skel(ConanFile):
     default_options = {"shared": False, "compiler": "gcc"}
     generators = "cmake"
     #exports_sources = "src/*", "include/*"
-    
+        
     def export_sources(self):
+        # Export the sources and headers to 
+        # correct directories.
         self.copy("*", dst="src", src="src")
         self.copy("CMakeLists.txt", src="src", dst="src")
         self.copy("*", dst="include", src="include")        

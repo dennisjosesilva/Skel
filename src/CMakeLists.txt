@@ -7,7 +7,9 @@ project(Skel LANGUAGES CUDA CXX)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(CUDA REQUIRED)
+find_package(CUDA REQUIRED) # find CUDA package
+
+# include CUDA directories
 include_directories(../include "${CUDA_INCLUDE_DIRS}")
 
 if (NOT DEFINED CMAKE_CUDA_STANDARD)
@@ -18,6 +20,7 @@ endif()
 # include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 # conan_basic_setup()
 
+# create variables to compilable source codes.
 set(SOURCE 
   skeleton_cuda.cpp
   skelft_core.cpp
@@ -28,6 +31,8 @@ target_link_libraries(Skel PUBLIC ${CUDA_LIBRARIES})
              
 set_target_properties(Skel
                       PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# flag for CUDA Compilation.                      
 set_target_properties(Skel
                       PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 set_target_properties(Skel PROPERTIES CUDA_ARCHITECTURES "35;50;72")
