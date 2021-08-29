@@ -1,7 +1,7 @@
 # Skel-conan
 
-Before running conan create, you first need to export LIBRARY_PATH, that is:
+This library calculates skeletons using CUDA.
 
-$ export LIBRARY_PATH=$LIBRARY_PATH:/usr/local/cuda/lib64
+If you want to install this library in your Conan system, we can run:
 
 $ conan create . Skel/0.0.1@jieyingwang/dmd
