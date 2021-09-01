@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.1)
-# set(CMAKE_CXX_COMPILER "/usr/bin/g++-10")
+set(CMAKE_CXX_COMPILER "/usr/bin/g++-10")
 
 project(Skel LANGUAGES CUDA CXX)
 
@@ -22,6 +22,7 @@ endif()
 
 # create variables to compilable source codes.
 set(SOURCE 
+  skeleton_cuda_recon.cpp
   skeleton_cuda.cpp
   skelft_core.cpp
   skelft.cu)

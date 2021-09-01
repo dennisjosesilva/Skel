@@ -124,8 +124,8 @@ FIELD<float>* computeSkeleton(int level, FIELD<float> *input) {
                 foreground_mask[INDEX(i, j)] = true;
                 siteParam[INDEX(i, j)] = 1;
                 //image[j*fboSize+i] = 255;
-                xm = min(xm, i); ym = min(ym, j);
-                xM = max(xM, i); yM = max(yM, j);
+                xm = Fieldmin(xm, i); ym = Fieldmin(ym, j);
+                xM = Fieldmax(xM, i); yM = Fieldmax(yM, j);
             }
         }
     }

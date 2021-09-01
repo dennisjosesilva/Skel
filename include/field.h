@@ -18,8 +18,8 @@
 
 
 using namespace std;
-#define max(x,y) (x<y)? y : x
-#define min(x,y) (x<y)? x : y
+#define Fieldmax(x,y) (x<y)? y : x
+#define Fieldmin(x,y) (x<y)? x : y
 #define MYINFINITY 1.0e7f
 
 class FLAGS;
@@ -41,7 +41,7 @@ public:
     const T&      operator()(int, int) const;
     const T       value(float, float) const;      //bilinearly interpolated value anywhere inside field
     T     gradnorm(int, int) const;       //norm of grad at (i,j)
-    void          setData(T* data) {v = data;}
+    void          FieldSetData(T* data) {v = data;}
     T*            data()                  { return v;  }
     const T*      data() const                    { return v;  }
     int       dimX()          { return nx; }  //number of columns
@@ -547,8 +547,8 @@ template <class T> void FIELD<T>::writePGM(const char* fname) const {
 
     fprintf(fp, "P5 %d %d 255\n", dimX(), dimY());
     for (const T* vend = data() + dimX() * dimY(), *vptr = data(); vptr < vend; vptr++) {
-        float v = ((*vptr) - m) / (M - m); v = max(v, 0);
-        if (v > M) v = 1; else v = min(v, 1);
+        float v = ((*vptr) - m) / (M - m); v = Fieldmax(v, 0);
+        if (v > M) v = 1; else v = Fieldmin(v, 1);
         buf[bb++] = (unsigned char)(int)(v * 255);
         if (bb == SIZE)
         {  fwrite(buf, sizeof(unsigned char), SIZE, fp); bb = 0; }
@@ -592,8 +592,8 @@ template <class T> void FIELD<T>::writePPM(const char* fname) const {
     fprintf(fp, "P6 %d %d 255\n", dimX(), dimY());
     for (const T* vend = data() + dimX() * dimY(), *vptr = data(); vptr < vend; vptr++) {
         float r, g, b, v = ((*vptr) - m) / (M - m);
-        v = max(v, 0);
-        if (v > M) { r = g = b = 1; } else v = min(v, 1);
+        v = Fieldmax(v, 0);
+        if (v > M) { r = g = b = 1; } else v = Fieldmin(v, 1);
         float2rgb(v, r, g, b);
 
         buf[bb++] = (unsigned char)(int)(r * 255);
