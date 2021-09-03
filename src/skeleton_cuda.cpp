@@ -139,7 +139,7 @@ FIELD<float>* computeSkeleton(int level, FIELD<float> *input) {
     if (!length) return NULL;
     skelft2DFillHoles((unsigned char*)outputFT, xm + 1, ym + 1, 1);
     skelft2DFT(outputFT, siteParam, xm, ym, xM, yM, fboSize);
-    //cout<<"SKELETON_SALIENCY_THRESHOLD: "<<SKELETON_SALIENCY_THRESHOLD<<endl;
+    
     skelft2DSkeleton(outputSkeleton, foreground_mask, length, SKELETON_SALIENCY_THRESHOLD, xm, ym, xM, yM);
    
     skel2DSkeletonFT(skelFT, xm, ym, xM, yM);
