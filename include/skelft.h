@@ -31,6 +31,8 @@ void skelft2DParams(int phase1Band, int phase2Band, int phase3Band);
 // size:
 void skelft2DFT(short* output, float* siteParam, short xm, short ym, short xM, short yM, int size);
 
+void Interp(float* output, float* curr_site, float* prev_site, float* curr_dt, float* prev_dt, int curr_bound_value, int prev_bound_value, int fboSize, bool firstL, int last_layer);
+
 
 // Compute thresholded skeleton of in-CUDA-memory FT.
 // length:    max value of site parameter (needed for normalization)

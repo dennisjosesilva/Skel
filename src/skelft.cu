@@ -17,7 +17,7 @@
 
 
 /****** Global Variables *******/
-const int NB = 7;						// Nr buffers we use and store in the entire framework
+const int NB = 8;						// Nr buffers we use and store in the entire framework
 short2 **pbaTextures;					// Work buffers used to compute and store resident images
 //	0: work buffer
 //	1: FT
@@ -29,6 +29,7 @@ short2 **pbaTextures;					// Work buffers used to compute and store resident ima
 //
 
 float*			pbaTexSiteParam;		// Stores boundary parameterization
+float* curr_site_, *prev_site_, *curr_dt_, *prev_dt_;
 int				pbaTexSize;				// Texture size (squared) actually used in all computations
 int				floodBand  = 4,			// Various FT computation parameters; defaults are good for an 1024x1024 image.	
 				maurerBand = 4,
@@ -38,6 +39,7 @@ texture<short2> pbaTexColor;			// 2D textures (bound to various buffers defined 
 texture<short2> pbaTexColor2;			//
 texture<short2> pbaTexLinks;
 texture<float>  pbaTexParam;			// 1D site parameterization texture (bound to pbaTexSiteParam)
+texture<float>  curr_site_tex, curr_dt_tex, prev_site_tex, prev_dt_tex;
 texture<unsigned char>
 				pbaTexGray;				// 2D texture of unsigned char values, e.g. the binary skeleton
 
@@ -67,6 +69,12 @@ void skelft2DInitialization(int maxTexSize)
        cudaMalloc((void **) &pbaTextures[i], pbaMemSize);									// Allocate work buffer 'i'
 
     cudaMalloc((void **) &pbaTexSiteParam, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
+
+	cudaMalloc((void **) &curr_site_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
+	cudaMalloc((void **) &prev_site_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
+	cudaMalloc((void **) &curr_dt_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
+	cudaMalloc((void **) &prev_dt_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
+	
 }
 
 
@@ -77,7 +85,13 @@ void skelft2DDeinitialization()
 {
     for(int i=0;i<NB;++i) cudaFree(pbaTextures[i]); 
 	cudaFree(pbaTexSiteParam);
-    free(pbaTextures);
+    
+	cudaFree(curr_site_);
+	cudaFree(prev_site_);
+	cudaFree(curr_dt_);
+	cudaFree(prev_dt_);
+	
+	free(pbaTextures);
 }
 
 
@@ -406,6 +420,70 @@ void skelft2DFT(short* output, float* siteParam, short xm, short ym, short xM, s
 
 
 
+__global__ void Interpolation(float* output, int size, int curr_bound_value, int prev_bound_value, bool firstL, int last_layer)							//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
+{																							//REMARK: we interpret 'inputVoro' as a 2D texture, as it's much easier/faster like this
+	int tx = blockIdx.x * blockDim.x + threadIdx.x;
+	int ty = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (tx<size && ty<size)																	//Careful not to go outside the image..
+	{
+	  int i = TOID(tx,ty,size);
+	  float curr_val = tex1Dfetch(curr_site_tex,i);	
+	  float prev_val = tex1Dfetch(prev_site_tex,i);	
+	  float curr_dt = tex1Dfetch(curr_dt_tex,i);	
+	  float prev_dt = tex1Dfetch(prev_dt_tex,i);
+	  if(firstL){
+		  output[i] = prev_bound_value;//clear_color
+	  }
+	  else if(last_layer){
+		    if (curr_val) 																	//These are points which define the 'sites' to compute the FT/skeleton (thus, have FT==identity)
+			{
+				float interp_last_layer_value = prev_bound_value + (curr_dt/10.0);
+				int MaxIntensity = (last_layer+10) > 255 ? 255 : (last_layer+10);
+				output[i] = (interp_last_layer_value > MaxIntensity) ? MaxIntensity : interp_last_layer_value;
+			}
+
+	  }	
+	  else{
+		if (!curr_val && prev_val) // If there are pixels active between boundaries, we smoothly interpolate them																	//These are points which define the 'sites' to compute the FT/skeleton (thus, have FT==identity)
+		{
+			float interp_alpha = prev_dt / ( prev_dt + curr_dt);
+			float interp_color = curr_bound_value * interp_alpha + prev_bound_value *  (1 - interp_alpha);
+			output[i] = interp_color;
+		}
+	  }
+
+	  
+	}
+}
+
+
+void Interp(float* output, float* curr_site, float* prev_site, float* curr_dt, float* prev_dt, int curr_bound_value, int prev_bound_value, int fboSize, bool firstL, int last_layer)
+{
+	pbaTexSize = fboSize;
+	cudaMemcpy(curr_site_, curr_site, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(prev_site_, prev_site, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(curr_dt_, curr_dt, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(prev_dt_, prev_dt, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
+	
+	cudaBindTexture(0, curr_site_tex, curr_site_);
+	cudaBindTexture(0, prev_site_tex, prev_site_);
+	cudaBindTexture(0, curr_dt_tex, curr_dt_);
+	cudaBindTexture(0, prev_dt_tex, prev_dt_);
+
+	dim3 block = dim3(BLOCKX,BLOCKY);
+	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
+	
+	Interpolation<<<grid,block>>>((float*)pbaTextures[7], pbaTexSize, curr_bound_value, prev_bound_value, firstL, last_layer);
+
+	cudaUnbindTexture(curr_site_tex);
+	cudaUnbindTexture(prev_site_tex);
+	cudaUnbindTexture(curr_dt_tex);
+	cudaUnbindTexture(prev_dt_tex);
+	//Copy to CPU
+	cudaMemcpy(output, pbaTextures[7], pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyDeviceToHost);
+	
+}
 
 
 

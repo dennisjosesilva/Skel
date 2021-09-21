@@ -21,13 +21,9 @@ endif()
 # conan_basic_setup()
 
 # create variables to compilable source codes.
-set(SOURCE 
-  skeleton_cuda_recon.cpp
-  skeleton_cuda.cpp
-  skelft_core.cpp
-  skelft.cu)
+file(GLOB_RECURSE PROJECT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
-add_library(Skel STATIC ${SOURCE})
+add_library(Skel STATIC ${PROJECT_SOURCE} skelft.cu)
 target_link_libraries(Skel PUBLIC ${CUDA_LIBRARIES})
              
 set_target_properties(Skel
