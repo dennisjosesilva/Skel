@@ -13,7 +13,7 @@
 //#include "include/messages.h"
 
 
-float SKELETON_SALIENCY_THRESHOLD;
+//float SKELETON_SALIENCY_THRESHOLD;
 //float SKELETON_ISLAND_THRESHOLD;
 float        SKELETON_DT_THRESHOLD;
 
@@ -107,7 +107,7 @@ FIELD<float>* skelft_to_field() {
 }
  
 
-FIELD<float>* computeSkeleton(int level, FIELD<float> *input) {
+FIELD<float>* computeSkeleton(int level, FIELD<float> *input, float saliencyThreshold) {
    
     memset(siteParam, 0, fboSize * fboSize * sizeof(float));
    
@@ -140,8 +140,8 @@ FIELD<float>* computeSkeleton(int level, FIELD<float> *input) {
     skelft2DFillHoles((unsigned char*)outputFT, xm + 1, ym + 1, 1);
     skelft2DFT(outputFT, siteParam, xm, ym, xM, yM, fboSize);
     
-    skelft2DSkeleton(outputSkeleton, foreground_mask, length, SKELETON_SALIENCY_THRESHOLD, xm, ym, xM, yM);
-   
+    //skelft2DSkeleton(outputSkeleton, foreground_mask, length, SKELETON_SALIENCY_THRESHOLD, xm, ym, xM, yM);
+    skelft2DSkeleton(outputSkeleton, foreground_mask, length, saliencyThreshold, xm, ym, xM, yM);
     skel2DSkeletonFT(skelFT, xm, ym, xM, yM);
     dt_to_field(input);
     auto imp = skel_to_field();

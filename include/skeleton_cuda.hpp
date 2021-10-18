@@ -2,7 +2,7 @@
 #define SKEL_CUDA_HPP
 #include "field.h"
 
-FIELD<float>* computeSkeleton(int level, FIELD<float> *im);
+FIELD<float>* computeSkeleton(int level, FIELD<float> *input, float saliencyThreshold);
 int initialize_skeletonization(FIELD<float>* im);
 void deallocateCudaMem();
 short* get_current_skel_ft();

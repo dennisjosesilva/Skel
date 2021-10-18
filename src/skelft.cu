@@ -303,7 +303,7 @@ __global__ void kernelSkel(float* output, bool* fg, short xm, short ym,
       float saliency = Imp / dt;
 	  //if (fg[id] && Imp>=threshold) output[Id] = 1;	//wang.The original one is fg[id].				//By filling only 1-values, we reduce memory access somehow (writing to output[] is expensive)
 	  //if (fg[id] && saliency>=threshold) output[Id] = saliency;
-	  if (fg[id] && Imp > 3.0 && saliency>=threshold) output[Id] = saliency;	//wang.The original one is fg[id].				//By filling only 1-values, we reduce memory access somehow (writing to output[] is expensive)
+	  if (fg[id] && Imp > 2.0 && saliency>=threshold) output[Id] = saliency;	//wang.The original one is fg[id].				//By filling only 1-values, we reduce memory access somehow (writing to output[] is expensive)
 		
 	} 
 	
