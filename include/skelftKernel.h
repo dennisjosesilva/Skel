@@ -16,7 +16,7 @@
 
 
 // Transpose a square matrix
-__global__ void kernelTranspose(short2 *data, int size)
+__global__ void kernelTranspose(short2 *data, int size, cudaTextureObject_t pbaTexColor)
 {
     __shared__ short2 block1[TILE_DIM][TILE_DIM + 1];
     __shared__ short2 block2[TILE_DIM][TILE_DIM + 1];
@@ -44,8 +44,8 @@ __global__ void kernelTranspose(short2 *data, int size)
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) 
 	{
 	    int idx = __mul24(i, size);
-        block1[threadIdx.y + i][threadIdx.x] = tex1Dfetch(pbaTexColor, id1 + idx);
-        block2[threadIdx.y + i][threadIdx.x] = tex1Dfetch(pbaTexColor, id2 + idx);
+        block1[threadIdx.y + i][threadIdx.x] = tex1Dfetch<short2>(pbaTexColor, id1 + idx);
+        block2[threadIdx.y + i][threadIdx.x] = tex1Dfetch<short2>(pbaTexColor, id2 + idx);
     }
 
     __syncthreads();
@@ -61,7 +61,8 @@ __global__ void kernelTranspose(short2 *data, int size)
     }
 }
 
-__global__ void kernelFloodDown(short2 *output, int size, int bandSize) 
+__global__ void kernelFloodDown(short2 *output, int size, int bandSize, cudaTextureObject_t
+    pbaTexColor) 
 {
     int tx = blockIdx.x * blockDim.x + threadIdx.x; 
     int ty = blockIdx.y * bandSize; 
@@ -73,7 +74,7 @@ __global__ void kernelFloodDown(short2 *output, int size, int bandSize)
 
     for (int i = 0; i < bandSize; ++i, id += size) 
 	{
-        pixel2 = tex1Dfetch(pbaTexColor, id); 
+        pixel2 = tex1Dfetch<short2>(pbaTexColor, id); 
 
         if (pixel2.x != MARKER)  pixel1 = pixel2; 
 
@@ -82,7 +83,8 @@ __global__ void kernelFloodDown(short2 *output, int size, int bandSize)
 }
 
 
-__global__ void kernelFloodUp(short2 *output, int size, int bandSize) 
+__global__ void kernelFloodUp(short2 *output, int size, int bandSize, cudaTextureObject_t 
+    pbaTexColor) 
 {
     int tx = blockIdx.x * blockDim.x + threadIdx.x; 
     int ty = (blockIdx.y+1) * bandSize - 1; 
@@ -97,7 +99,7 @@ __global__ void kernelFloodUp(short2 *output, int size, int bandSize)
 	{
         dist1 = abs(pixel1.y - ty + i); 
 
-        pixel2 = tex1Dfetch(pbaTexColor, id); 
+        pixel2 = tex1Dfetch<short2>(pbaTexColor, id); 
         dist2 = abs(pixel2.y - ty + i); 
 
         if (dist2 < dist1) pixel1 = pixel2; 
@@ -106,7 +108,8 @@ __global__ void kernelFloodUp(short2 *output, int size, int bandSize)
     }
 }
 
-__global__ void kernelPropagateInterband(short2 *output, int size, int bandSize) 
+__global__ void kernelPropagateInterband(short2 *output, int size, int bandSize,
+    cudaTextureObject_t pbaTexColor) 
 {
     int tx = blockIdx.x * blockDim.x + threadIdx.x; 
     int inc = __mul24(bandSize, size); 
@@ -118,12 +121,12 @@ __global__ void kernelPropagateInterband(short2 *output, int size, int bandSize)
     int topId = TOID(tx, ty, size); 
     int bottomId = TOID(tx, ty + bandSize - 1, size); 
 
-    pixel = tex1Dfetch(pbaTexColor, topId); 
+    pixel = tex1Dfetch<short2>(pbaTexColor, topId); 
     int myDist = abs(pixel.y - ty); 
 
     for (nid = bottomId - inc; nid >= 0; nid -= inc) 
 	{
-        pixel = tex1Dfetch(pbaTexColor, nid); 
+        pixel = tex1Dfetch<short2>(pbaTexColor, nid); 
         if (pixel.x != MARKER) 
 		{ 
             nDist = abs(pixel.y - ty); 
@@ -134,12 +137,12 @@ __global__ void kernelPropagateInterband(short2 *output, int size, int bandSize)
 
     // Last row, look downward
     ty = ty + bandSize - 1; 
-    pixel = tex1Dfetch(pbaTexColor, bottomId); 
+    pixel = tex1Dfetch<short2>(pbaTexColor, bottomId); 
     myDist = abs(pixel.y - ty); 
 
     for (ny = ty + 1, nid = topId + inc; ny < size; ny += bandSize, nid += inc) 
 	{
-        pixel = tex1Dfetch(pbaTexColor, nid); 
+        pixel = tex1Dfetch<short2>(pbaTexColor, nid); 
 
         if (pixel.x != MARKER) 
 		{ 
@@ -150,13 +153,14 @@ __global__ void kernelPropagateInterband(short2 *output, int size, int bandSize)
     }
 }
 
-__global__ void kernelUpdateVertical(short2 *output, int size, int band, int bandSize) 
+__global__ void kernelUpdateVertical(short2 *output, int size, int band, int bandSize,
+    cudaTextureObject_t pbaTexColor, cudaTextureObject_t pbaTexLinks) 
 {
     int tx = blockIdx.x * blockDim.x + threadIdx.x; 
     int ty = blockIdx.y * bandSize; 
 
-    short2 top = tex1Dfetch(pbaTexLinks, TOID(tx, ty, size)); 
-    short2 bottom = tex1Dfetch(pbaTexLinks, TOID(tx, ty + bandSize - 1, size)); 
+    short2 top = tex1Dfetch<short2>(pbaTexLinks, TOID(tx, ty, size)); 
+    short2 bottom = tex1Dfetch<short2>(pbaTexLinks, TOID(tx, ty + bandSize - 1, size)); 
     short2 pixel; 
 
     int dist, myDist; 
@@ -165,7 +169,7 @@ __global__ void kernelUpdateVertical(short2 *output, int size, int band, int ban
 
     for (int i = 0; i < bandSize; i++, id += size) 
 	{
-        pixel = tex1Dfetch(pbaTexColor, id); 
+        pixel = tex1Dfetch<short2>(pbaTexColor, id); 
         myDist = abs(pixel.y - (ty + i)); 
 
         dist = abs(top.y - (ty + i)); 
@@ -189,7 +193,8 @@ __device__ float interpoint(int x1, int y1, int x2, int y2, int x0)
     return yM + nx * (xM - x0) / ny; 
 }
 
-__global__ void kernelProximatePoints(short2 *stack, int size, int bandSize) 
+__global__ void kernelProximatePoints(short2 *stack, int size, int bandSize, cudaTextureObject_t 
+    pbaTexColor) 
 {
     int tx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x; 
     int ty = __mul24(blockIdx.y, bandSize); 
@@ -201,7 +206,7 @@ __global__ void kernelProximatePoints(short2 *stack, int size, int bandSize)
     last1.y = -1; last2.y = -1; 
 
     for (int i = 0; i < bandSize; i++, id += size) {
-        current = tex1Dfetch(pbaTexColor, id);
+        current = tex1Dfetch<short2>(pbaTexColor, id);
 
         if (current.x != MARKER) {
             while (last2.y >= 0) {
@@ -226,7 +231,7 @@ __global__ void kernelProximatePoints(short2 *stack, int size, int bandSize)
         stack[TOID(tx, ty + bandSize - 1, size)] = make_short2(MARKER, lasty); 
 }
 
-__global__ void kernelCreateForwardPointers(short2 *output, int size, int bandSize) 
+__global__ void kernelCreateForwardPointers(short2 *output, int size, int bandSize, cudaTextureObject_t pbaTexLinks) 
 {
     int tx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x; 
     int ty = __mul24(blockIdx.y+1, bandSize) - 1; 
@@ -235,7 +240,7 @@ __global__ void kernelCreateForwardPointers(short2 *output, int size, int bandSi
     short2 current; 
 
     // Get the tail pointer
-    current = tex1Dfetch(pbaTexLinks, id); 
+    current = tex1Dfetch<short2>(pbaTexLinks, id); 
 
     if (current.x == MARKER)
         nexty = current.y; 
@@ -244,7 +249,7 @@ __global__ void kernelCreateForwardPointers(short2 *output, int size, int bandSi
 
     for (int i = 0; i < bandSize; i++, id -= size)
         if (ty - i == nexty) {
-            current = make_short2(lasty, tex1Dfetch(pbaTexLinks, id).y);
+            current = make_short2(lasty, tex1Dfetch<short2>(pbaTexLinks, id).y);
             output[id] = current; 
 
             lasty = nexty; 
@@ -256,7 +261,8 @@ __global__ void kernelCreateForwardPointers(short2 *output, int size, int bandSi
             output[id + size] = make_short2(lasty, MARKER);  
 }
 
-__global__ void kernelMergeBands(short2 *output, int size, int bandSize)
+__global__ void kernelMergeBands(short2 *output, int size, int bandSize,
+    cudaTextureObject_t pbaTexColor, cudaTextureObject_t pbaTexLinks)
 {
     int tx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x; 
     int band1 = blockIdx.y * 2; 
@@ -270,36 +276,36 @@ __global__ void kernelMergeBands(short2 *output, int size, int bandSize)
 
     // Get the two last items of the first list
     lasty = __mul24(band2, bandSize) - 1; 
-    last2 = make_short2(tex1Dfetch(pbaTexColor, TOID(tx, lasty, size)).x, 
-        tex1Dfetch(pbaTexLinks, TOID(tx, lasty, size)).y); 
+    last2 = make_short2(tex1Dfetch<short2>(pbaTexColor, TOID(tx, lasty, size)).x, 
+        tex1Dfetch<short2>(pbaTexLinks, TOID(tx, lasty, size)).y); 
 
     if (last2.x == MARKER) {
         lasty = last2.y; 
 
         if (lasty >= 0) 
-            last2 = make_short2(tex1Dfetch(pbaTexColor, TOID(tx, lasty, size)).x, 
-            tex1Dfetch(pbaTexLinks, TOID(tx, lasty, size)).y); 
+            last2 = make_short2(tex1Dfetch<short2>(pbaTexColor, TOID(tx, lasty, size)).x, 
+            tex1Dfetch<short2>(pbaTexLinks, TOID(tx, lasty, size)).y); 
         else
             last2 = make_short2(MARKER, MARKER); 
     }
 
     if (last2.y >= 0) {
         // Second item at the top of the stack
-        last1 = make_short2(tex1Dfetch(pbaTexColor, TOID(tx, last2.y, size)).x, 
-            tex1Dfetch(pbaTexLinks, TOID(tx, last2.y, size)).y); 
+        last1 = make_short2(tex1Dfetch<short2>(pbaTexColor, TOID(tx, last2.y, size)).x, 
+            tex1Dfetch<short2>(pbaTexLinks, TOID(tx, last2.y, size)).y); 
     }
 
     // Get the first item of the second band
     firsty = __mul24(band2, bandSize); 
-    current = make_short2(tex1Dfetch(pbaTexLinks, TOID(tx, firsty, size)).x, 
-        tex1Dfetch(pbaTexColor, TOID(tx, firsty, size)).x); 
+    current = make_short2(tex1Dfetch<short2>(pbaTexLinks, TOID(tx, firsty, size)).x, 
+        tex1Dfetch<short2>(pbaTexColor, TOID(tx, firsty, size)).x); 
 
     if (current.y == MARKER) {
         firsty = current.x; 
 
         if (firsty >= 0) 
-            current = make_short2(tex1Dfetch(pbaTexLinks, TOID(tx, firsty, size)).x, 
-            tex1Dfetch(pbaTexColor, TOID(tx, firsty, size)).x); 
+            current = make_short2(tex1Dfetch<short2>(pbaTexLinks, TOID(tx, firsty, size)).x, 
+            tex1Dfetch<short2>(pbaTexColor, TOID(tx, firsty, size)).x); 
         else
             current = make_short2(MARKER, MARKER); 
     }
@@ -323,7 +329,7 @@ __global__ void kernelMergeBands(short2 *output, int size, int bandSize)
             --top; 
 
             if (last1.y >= 0) 
-                last1 = make_short2(tex1Dfetch(pbaTexColor, TOID(tx, last1.y, size)).x, 
+                last1 = make_short2(tex1Dfetch<short2>(pbaTexColor, TOID(tx, last1.y, size)).x, 
                 output[TOID(tx, last1.y, size)].y); 
         }
 
@@ -340,8 +346,8 @@ __global__ void kernelMergeBands(short2 *output, int size, int bandSize)
 
         // Advance the current pointer to the next one
         if (firsty >= 0) 
-            current = make_short2(tex1Dfetch(pbaTexLinks, TOID(tx, firsty, size)).x, 
-            tex1Dfetch(pbaTexColor, TOID(tx, firsty, size)).x); 
+            current = make_short2(tex1Dfetch<short2>(pbaTexLinks, TOID(tx, firsty, size)).x, 
+            tex1Dfetch<short2>(pbaTexColor, TOID(tx, firsty, size)).x); 
         else
             current = make_short2(MARKER, MARKER); 
     }
@@ -349,10 +355,10 @@ __global__ void kernelMergeBands(short2 *output, int size, int bandSize)
     // Update the head and tail pointer. 
     firsty = __mul24(band1, bandSize); 
     lasty = __mul24(band2, bandSize); 
-    current = tex1Dfetch(pbaTexLinks, TOID(tx, firsty, size)); 
+    current = tex1Dfetch<short2>(pbaTexLinks, TOID(tx, firsty, size)); 
 
     if (current.y == MARKER && current.x < 0) {	// No head?
-        last1 = tex1Dfetch(pbaTexLinks, TOID(tx, lasty, size)); 
+        last1 = tex1Dfetch<short2>(pbaTexLinks, TOID(tx, lasty, size)); 
 
         if (last1.y == MARKER)
             current.x = last1.x; 
@@ -364,10 +370,10 @@ __global__ void kernelMergeBands(short2 *output, int size, int bandSize)
 
     firsty = __mul24(band1, bandSize) + bandSize - 1; 
     lasty = __mul24(band2, bandSize) + bandSize - 1; 
-    current = tex1Dfetch(pbaTexLinks, TOID(tx, lasty, size)); 
+    current = tex1Dfetch<short2>(pbaTexLinks, TOID(tx, lasty, size)); 
 
     if (current.x == MARKER && current.y < 0) {	// No tail?
-        last1 = tex1Dfetch(pbaTexLinks, TOID(tx, firsty, size)); 
+        last1 = tex1Dfetch<short2>(pbaTexLinks, TOID(tx, firsty, size)); 
 
         if (last1.x == MARKER) 
             current.y = last1.y; 
@@ -378,16 +384,17 @@ __global__ void kernelMergeBands(short2 *output, int size, int bandSize)
     }
 }
 
-__global__ void kernelDoubleToSingleList(short2 *output, int size)
+__global__ void kernelDoubleToSingleList(short2 *output, int size, cudaTextureObject_t pbaTexColor,
+    cudaTextureObject_t pbaTexLinks)
 {
     int tx = __mul24(blockIdx.x, blockDim.x) + threadIdx.x; 
     int ty = blockIdx.y; 
     int id = TOID(tx, ty, size); 
 
-    output[id] = make_short2(tex1Dfetch(pbaTexColor, id).x, tex1Dfetch(pbaTexLinks, id).y); 
+    output[id] = make_short2(tex1Dfetch<short2>(pbaTexColor, id).x, tex1Dfetch<short2>(pbaTexLinks, id).y); 
 }
 
-__global__ void kernelColor(short2 *output, int size) 
+__global__ void kernelColor(short2 *output, int size, cudaTextureObject_t pbaTexColor) 
 {
     __shared__ short2 s_last1[BLOCKSIZE], s_last2[BLOCKSIZE]; 
     __shared__ int s_lasty[BLOCKSIZE]; 
@@ -403,15 +410,15 @@ __global__ void kernelColor(short2 *output, int size)
 	{
         lasty = size - 1; 
 
-        last2 = tex1Dfetch(pbaTexColor, __mul24(lasty, size) + tx); 
+        last2 = tex1Dfetch<short2>(pbaTexColor, __mul24(lasty, size) + tx); 
 
         if (last2.x == MARKER) {
             lasty = last2.y; 
-            last2 = tex1Dfetch(pbaTexColor, __mul24(lasty, size) + tx); 
+            last2 = tex1Dfetch<short2>(pbaTexColor, __mul24(lasty, size) + tx); 
         }
 
         if (last2.y >= 0) 
-            last1 = tex1Dfetch(pbaTexColor, __mul24(last2.y, size) + tx); 
+            last1 = tex1Dfetch<short2>(pbaTexColor, __mul24(last2.y, size) + tx); 
 
         s_last1[col] = last1; s_last2[col] = last2; s_lasty[col] = lasty; 
     }
@@ -435,7 +442,7 @@ __global__ void kernelColor(short2 *output, int size)
             best = dist; lasty = last2.y; last2 = last1;
 
             if (last2.y >= 0) 
-                last1 = tex1Dfetch(pbaTexColor, __mul24(last2.y, size) + tx); 
+                last1 = tex1Dfetch<short2>(pbaTexColor, __mul24(last2.y, size) + tx); 
         }
 
         __syncthreads(); 

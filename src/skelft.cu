@@ -29,18 +29,22 @@ short2 **pbaTextures;					// Work buffers used to compute and store resident ima
 //
 
 float*			pbaTexSiteParam;		// Stores boundary parameterization
-float* curr_site_, *prev_site_, *curr_dt_, *prev_dt_;
+float *curr_site_;
+float *prev_site_;
+float *curr_dt_;
+float *prev_dt_;
+
 int				pbaTexSize;				// Texture size (squared) actually used in all computations
 int				floodBand  = 4,			// Various FT computation parameters; defaults are good for an 1024x1024 image.	
 				maurerBand = 4,
 				colorBand  = 4;		
 
-texture<short2> pbaTexColor;			// 2D textures (bound to various buffers defined above as needed)
-texture<short2> pbaTexColor2;			//
-texture<short2> pbaTexLinks;
-texture<float>  pbaTexParam;			// 1D site parameterization texture (bound to pbaTexSiteParam)
-texture<float>  curr_site_tex, curr_dt_tex, prev_site_tex, prev_dt_tex;
-texture<unsigned char>
+cudaTextureObject_t pbaTexColor;			// 2D textures (bound to various buffers defined above as needed)
+cudaTextureObject_t pbaTexColor2;			//
+cudaTextureObject_t pbaTexLinks;
+cudaTextureObject_t  pbaTexParam;			// 1D site parameterization texture (bound to pbaTexSiteParam)
+cudaTextureObject_t curr_site_tex, curr_dt_tex, prev_site_tex, prev_dt_tex;
+cudaTextureObject_t
 				pbaTexGray;				// 2D texture of unsigned char values, e.g. the binary skeleton
 
 #if __CUDA_ARCH__ < 110					// We cannot use atomic intrinsics on SM10 or below. Thus, we define these as nop.
@@ -52,6 +56,94 @@ texture<unsigned char>
 /********* Kernels ********/
 #include "skelftKernel.h"
 
+
+cudaTextureObject_t createTexObjFloat(void* source, int texSize, const char *varName)
+{
+	cudaTextureObject_t texObj;
+
+	cudaResourceDesc resDesSource;
+	memset(&resDesSource, 0, sizeof(resDesSource));
+	resDesSource.resType = cudaResourceTypeLinear;
+	resDesSource.res.linear.devPtr = source;
+	resDesSource.res.linear.desc.f = cudaChannelFormatKindFloat;
+	resDesSource.res.linear.desc.x = 32; // bits per channel
+	resDesSource.res.linear.sizeInBytes = texSize * sizeof(float);
+
+	cudaTextureDesc texDesc;
+	memset(&texDesc, 0, sizeof(texDesc));
+	texDesc.readMode = cudaReadModeElementType;
+
+	cudaError_t err = cudaCreateTextureObject(&texObj, &resDesSource, &texDesc, nullptr);
+	printf("float, %s: error creating texture: %s\n", cudaGetErrorString(err), varName);
+
+	return texObj;
+}
+
+cudaTextureObject_t createTexObjFloat(void* source, int texSize)
+{
+	cudaTextureObject_t texObj;
+
+	cudaResourceDesc resDesSource;
+	memset(&resDesSource, 0, sizeof(resDesSource));
+	resDesSource.resType = cudaResourceTypeLinear;
+	resDesSource.res.linear.devPtr = source;
+	resDesSource.res.linear.desc.f = cudaChannelFormatKindFloat;
+	resDesSource.res.linear.desc.x = sizeof(float)*8; // bits per channel
+	resDesSource.res.linear.sizeInBytes = texSize * sizeof(float);
+
+	cudaTextureDesc texDesc;
+	memset(&texDesc, 0, sizeof(texDesc));
+	texDesc.readMode = cudaReadModeElementType;
+
+	cudaError_t err = cudaCreateTextureObject(&texObj, &resDesSource, &texDesc, NULL);
+	printf("float: error creating texture: %s\n", cudaGetErrorString(err));
+
+	return texObj;
+}
+
+cudaTextureObject_t createTexObjShort2(void* source, int texSize)
+{
+	cudaTextureObject_t texObj;
+
+	cudaResourceDesc resDesSource;
+	memset(&resDesSource, 0, sizeof(resDesSource));
+	resDesSource.resType = cudaResourceTypeLinear;
+	resDesSource.res.linear.devPtr = source;
+	resDesSource.res.linear.desc.f = cudaChannelFormatKindSigned;
+	resDesSource.res.linear.desc.x = 32; // bits per channel
+	resDesSource.res.linear.sizeInBytes = texSize * sizeof(short2);
+
+	cudaTextureDesc texDesc;
+	memset(&texDesc, 0, sizeof(texDesc));
+	texDesc.readMode = cudaReadModeElementType;
+
+	cudaError_t err = cudaCreateTextureObject(&texObj, &resDesSource, &texDesc, nullptr);
+	printf("short2: error creating texture: %s\n", cudaGetErrorString(err));
+
+	return texObj;
+}
+
+cudaTextureObject_t createTexObjUnsignedChar(void **source, int texSize)
+{
+	cudaTextureObject_t texObj;
+
+	cudaResourceDesc resDesSource;
+	memset(&resDesSource, 0, sizeof(resDesSource));
+	resDesSource.resType = cudaResourceTypeLinear;
+	resDesSource.res.linear.devPtr = source;
+	resDesSource.res.linear.desc.f = cudaChannelFormatKindUnsigned;
+	resDesSource.res.linear.desc.x = 8; // bits per channel
+	resDesSource.res.linear.sizeInBytes = texSize * sizeof(unsigned char);
+
+	cudaTextureDesc texDesc;
+	memset(&texDesc, 0, sizeof(texDesc));
+	texDesc.readMode = cudaReadModeElementType;
+
+	cudaError_t err = cudaCreateTextureObject(&texObj, &resDesSource, &texDesc, nullptr);
+	printf("uchar: error creating texture: %s\n", cudaGetErrorString(err)); 
+
+	return texObj;
+}
 
 
 // Initialize necessary memory (CPU/GPU sides)
@@ -74,7 +166,13 @@ void skelft2DInitialization(int maxTexSize)
 	cudaMalloc((void **) &prev_site_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
 	cudaMalloc((void **) &curr_dt_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
 	cudaMalloc((void **) &prev_dt_, maxTexSize * maxTexSize * sizeof(float));		// Sites texture 
-	
+
+	// Create Texture Objects		
+	pbaTexParam = createTexObjFloat((void*)pbaTexSiteParam, maxTexSize * maxTexSize);
+	curr_site_tex = createTexObjFloat((void*)curr_site_, maxTexSize * maxTexSize);
+	prev_site_tex = createTexObjFloat((void*)prev_site_, maxTexSize * maxTexSize);
+	curr_dt_tex = createTexObjFloat((void*)curr_dt_, maxTexSize * maxTexSize);
+	prev_dt_tex = createTexObjFloat((void*)prev_dt_, maxTexSize * maxTexSize);
 }
 
 
@@ -83,6 +181,19 @@ void skelft2DInitialization(int maxTexSize)
 // Deallocate all allocated memory
 void skelft2DDeinitialization()
 {
+	// Destroy texture objects
+	// cudaDestroyTextureObject(pbaTexColor);
+	// cudaDestroyTextureObject(pbaTexColor2);
+	// cudaDestroyTextureObject(pbaTexLinks);
+
+	// cudaDestroyTextureObject(pbaTexParam);
+	// cudaDestroyTextureObject(curr_site_tex);
+	// cudaDestroyTextureObject(curr_dt_tex);	
+	// cudaDestroyTextureObject(prev_site_tex);
+	// cudaDestroyTextureObject(prev_dt_tex);
+
+	// cudaDestroyTextureObject(pbaTexGray);
+
     for(int i=0;i<NB;++i) cudaFree(pbaTextures[i]); 
 	cudaFree(pbaTexSiteParam);
     
@@ -96,7 +207,8 @@ void skelft2DDeinitialization()
 
 
 
-__global__ void kernelSiteParamInit(short2* inputVoro, int size)							//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
+__global__ void kernelSiteParamInit(short2* inputVoro, int size,
+	cudaTextureObject_t pbaTexParam)							//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
 {																							//REMARK: we interpret 'inputVoro' as a 2D texture, as it's much easier/faster like this
 	int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -104,7 +216,7 @@ __global__ void kernelSiteParamInit(short2* inputVoro, int size)							//Initial
     if (tx<size && ty<size)																	//Careful not to go outside the image..
 	{
 	  int i = TOID(tx,ty,size);
-	  float param = tex1Dfetch(pbaTexParam,i);												//The sites-param has non-zero (parameter) values precisely on non-boundary points
+	  float param = tex1Dfetch<float>(pbaTexParam,i);												//The sites-param has non-zero (parameter) values precisely on non-boundary points
 
 	  short2& v = inputVoro[i];
 	  v.x = v.y = MARKER;																	//Non-boundary points are marked as 0 in the parameterization. Here we will compute the FT.
@@ -125,17 +237,13 @@ void skelft2DInitializeInput(float* sites, int size)										// Copy input site
 	cudaMemcpy(pbaTexSiteParam, sites, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
 																							// Pass sites parameterization to CUDA.  Must be done before calling the initialization
 																							// kernel, since we use the sites-param as a texture in that kernel
-	cudaBindTexture(0, pbaTexParam, pbaTexSiteParam);										// Bind the sites-param as a 1D texture so we can quickly index it next
+	//cudaBindTexture(0, pbaTexParam, pbaTexSiteParam);										// Bind the sites-param as a 1D texture so we can quickly index it next
 	dim3 block = dim3(BLOCKX,BLOCKY);
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 	
-	kernelSiteParamInit<<<grid,block>>>(pbaTextures[0],pbaTexSize);							// Do the site param initialization. This sets up pbaTextures[0]
-	cudaUnbindTexture(pbaTexParam);
+	kernelSiteParamInit<<<grid,block>>>(pbaTextures[0],pbaTexSize, pbaTexParam);							// Do the site param initialization. This sets up pbaTextures[0]
+	//cudaUnbindTexture(pbaTexParam);
 }
-
-
-
-
 
 // In-place transpose a squared texture. 
 // Block orders are modified to optimize memory access. 
@@ -145,9 +253,14 @@ void pba2DTranspose(short2 *texture)
     dim3 block(TILE_DIM, BLOCK_ROWS); 
     dim3 grid(pbaTexSize / TILE_DIM, pbaTexSize / TILE_DIM); 
 
-    cudaBindTexture(0, pbaTexColor, texture); 
-    kernelTranspose<<< grid, block >>>(texture, pbaTexSize); 
-    cudaUnbindTexture(pbaTexColor); 
+    // cudaBindTexture(0, pbaTexColor, texture); 
+    // kernelTranspose<<< grid, block >>>(texture, pbaTexSize); 
+    // cudaUnbindTexture(pbaTexColor); 
+
+	// Texture object approach
+	pbaTexColor = createTexObjShort2((void*)texture, pbaTexSize*pbaTexSize);
+	kernelTranspose<<< grid, block >>>(texture, pbaTexSize, pbaTexColor);
+	cudaDestroyTextureObject(pbaTexColor);
 }
 
 // Phase 1 of PBA. m1 must divides texture size
@@ -157,21 +270,32 @@ void pba2DPhase1(int m1, short xm, short ym, short xM, short yM)
     dim3 grid = dim3(pbaTexSize / block.x, m1); 
 
     // Flood vertically in their own bands
-    cudaBindTexture(0, pbaTexColor, pbaTextures[0]); 
-    kernelFloodDown<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexSize / m1); 
-    cudaUnbindTexture(pbaTexColor); 
+    // cudaBindTexture(0, pbaTexColor, pbaTextures[0]); 
+    // kernelFloodDown<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexSize / m1); 
+    // cudaUnbindTexture(pbaTexColor); 
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[0], pbaTexSize*pbaTexSize);
+	kernelFloodDown<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexSize / m1, pbaTexColor); 
+	cudaDestroyTextureObject(pbaTexColor);
 
-    cudaBindTexture(0, pbaTexColor, pbaTextures[1]); 
-    kernelFloodUp<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexSize / m1); 
+    // cudaBindTexture(0, pbaTexColor, pbaTextures[1]); 
+    // kernelFloodUp<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexSize / m1); 
+
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[1], pbaTexSize*pbaTexSize);
+	kernelFloodUp<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexSize / m1, pbaTexColor); 	
 
     // Passing information between bands
     grid = dim3(pbaTexSize / block.x, m1); 
-    kernelPropagateInterband<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m1); 
+    kernelPropagateInterband<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m1, pbaTexColor); 
 
-    cudaBindTexture(0, pbaTexLinks, pbaTextures[0]); 
-    kernelUpdateVertical<<< grid, block >>>(pbaTextures[1], pbaTexSize, m1, pbaTexSize / m1); 
-    cudaUnbindTexture(pbaTexLinks); 
-    cudaUnbindTexture(pbaTexColor); 
+    // cudaBindTexture(0, pbaTexLinks, pbaTextures[0]); 
+    // kernelUpdateVertical<<< grid, block >>>(pbaTextures[1], pbaTexSize, m1, pbaTexSize / m1); 
+    // cudaUnbindTexture(pbaTexLinks); 
+    // cudaUnbindTexture(pbaTexColor); 
+
+	pbaTexLinks = createTexObjShort2((void*)pbaTextures[0], pbaTexSize*pbaTexSize);
+	kernelUpdateVertical<<< grid, block >>>(pbaTextures[1], pbaTexSize, m1, pbaTexSize / m1, pbaTexColor, pbaTexLinks); 
+	cudaDestroyTextureObject(pbaTexLinks);
+	cudaDestroyTextureObject(pbaTexColor);
 }
 
 // Phase 2 of PBA. m2 must divides texture size
@@ -180,24 +304,31 @@ void pba2DPhase2(int m2)
     // Compute proximate points locally in each band
     dim3 block = dim3(BLOCKSIZE);   
     dim3 grid = dim3(pbaTexSize / block.x, m2); 
-    cudaBindTexture(0, pbaTexColor, pbaTextures[1]); 
-    kernelProximatePoints<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m2); 
+    // cudaBindTexture(0, pbaTexColor, pbaTextures[1]); 
+    // kernelProximatePoints<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m2); 
 
-    cudaBindTexture(0, pbaTexLinks, pbaTextures[0]); 
-    kernelCreateForwardPointers<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m2); 
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[1], pbaTexSize*pbaTexSize);
+	kernelProximatePoints<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m2, pbaTexColor); 
+
+    // cudaBindTexture(0, pbaTexLinks, pbaTextures[0]); 
+    // kernelCreateForwardPointers<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m2); 
+	pbaTexLinks = createTexObjShort2((void*)pbaTextures[0], pbaTexSize*pbaTexSize);
+	kernelCreateForwardPointers<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / m2, pbaTexLinks); 
 
     // Repeatly merging two bands into one
     for (int noBand = m2; noBand > 1; noBand /= 2) {
         grid = dim3(pbaTexSize / block.x, noBand / 2); 
-        kernelMergeBands<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / noBand); 
+        kernelMergeBands<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexSize / noBand, pbaTexColor, pbaTexLinks); 
     }
 
     // Replace the forward link with the X coordinate of the seed to remove
     // the need of looking at the other texture. We need it for coloring.
     grid = dim3(pbaTexSize / block.x, pbaTexSize); 
-    kernelDoubleToSingleList<<< grid, block >>>(pbaTextures[0], pbaTexSize); 
-    cudaUnbindTexture(pbaTexLinks); 
-    cudaUnbindTexture(pbaTexColor); 
+    kernelDoubleToSingleList<<< grid, block >>>(pbaTextures[0], pbaTexSize, pbaTexColor, pbaTexLinks); 
+    // cudaUnbindTexture(pbaTexLinks); 
+    // cudaUnbindTexture(pbaTexColor); 
+	cudaDestroyTextureObject(pbaTexLinks);
+	cudaDestroyTextureObject(pbaTexColor);
 }
 
 // Phase 3 of PBA. m3 must divides texture size
@@ -205,12 +336,15 @@ void pba2DPhase3(int m3)
 {
     dim3 block = dim3(BLOCKSIZE / m3, m3); 
     dim3 grid = dim3(pbaTexSize / block.x); 
-    cudaBindTexture(0, pbaTexColor, pbaTextures[0]); 
-    kernelColor<<< grid, block >>>(pbaTextures[1], pbaTexSize); 
-    cudaUnbindTexture(pbaTexColor); 
+
+    // cudaBindTexture(0, pbaTexColor, pbaTextures[0]); 
+    // kernelColor<<< grid, block >>>(pbaTextures[1], pbaTexSize); 
+    // cudaUnbindTexture(pbaTexColor); 
+
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[0], pbaTexSize);
+	kernelColor<<< grid, block >>>(pbaTextures[1], pbaTexSize, pbaTexColor); 
+	cudaDestroyTextureObject(pbaTexColor);
 }
-
-
 
 void skel2DFTCompute(short xm, short ym, short xM, short yM, int floodBand, int maurerBand, int colorBand)
 {
@@ -229,7 +363,8 @@ void skel2DFTCompute(short xm, short ym, short xM, short yM, int floodBand, int 
 
 
 
-__global__ void kernelThresholdDT(unsigned char* output, int size, float threshold2, short xm, short ym, short xM, short yM)
+__global__ void kernelThresholdDT(unsigned char* output, int size, float threshold2, short xm, short ym, short xM, short yM,
+	cudaTextureObject_t pbaTexColor)
 //Input:    pbaTexColor: closest-site-ids per pixel, i.e. FT
 //Output:   output: thresholded DT
 {
@@ -239,7 +374,7 @@ __global__ void kernelThresholdDT(unsigned char* output, int size, float thresho
 	if (tx>xm && ty>ym && tx<xM && ty<yM)									//careful not to index outside the image..
 	{	
   	  int    id     = TOID(tx, ty, size);
-	  short2 voroid = tex1Dfetch(pbaTexColor,id);							//get the closest-site to tx,ty into voroid.x,.y
+	  short2 voroid = tex1Dfetch<short2>(pbaTexColor,id);							//get the closest-site to tx,ty into voroid.x,.y
 	  float  d2     = (tx-voroid.x)*(tx-voroid.x)+(ty-voroid.y)*(ty-voroid.y);
 	  output[id]    = (d2<=threshold2);										//threshold DT into binary image
     }
@@ -247,7 +382,8 @@ __global__ void kernelThresholdDT(unsigned char* output, int size, float thresho
 
 
 
-__global__ void kernelDT(short* output, int size, float threshold2, short xm, short ym, short xM, short yM)
+__global__ void kernelDT(short* output, int size, float threshold2, short xm, short ym, short xM, short yM,
+	cudaTextureObject_t pbaTexColor)
 //Input:    pbaTexColor: closest-site-ids per pixel, i.e. FT
 //Output:   output: DT
 {
@@ -257,7 +393,7 @@ __global__ void kernelDT(short* output, int size, float threshold2, short xm, sh
 	if (tx>xm && ty>ym && tx<xM && ty<yM)									//careful not to index outside the image..
 	{	
   	  int    id     = TOID(tx, ty, size);
-	  short2 voroid = tex1Dfetch(pbaTexColor,id);							//get the closest-site to tx,ty into voroid.x,.y
+	  short2 voroid = tex1Dfetch<short2>(pbaTexColor,id);							//get the closest-site to tx,ty into voroid.x,.y
 	  float  d2     = (tx-voroid.x)*(tx-voroid.x)+(ty-voroid.y)*(ty-voroid.y);
 	  output[id]    = sqrtf(d2);											//save the Euclidean DT
     }
@@ -265,7 +401,8 @@ __global__ void kernelDT(short* output, int size, float threshold2, short xm, sh
 
 
 __global__ void kernelSkel(float* output, bool* fg, short xm, short ym, 
-						   short xM, short yM, short size, float threshold, float length)	
+						   short xM, short yM, short size, float threshold, float length,
+						   cudaTextureObject_t pbaTexColor, cudaTextureObject_t pbaTexParam)	
 																			//Input:    pbaTexColor: closest-site-ids per pixel
 																			//			pbaTexParam: labels for sites (only valid at site locations)
 {																			//Output:	output: binary thresholded skeleton
@@ -276,21 +413,21 @@ __global__ void kernelSkel(float* output, bool* fg, short xm, short ym,
 	{
   	  int    id     = TOID(tx, ty, size);
 	  int    Id     = id;
-	  short2 voroid = tex1Dfetch(pbaTexColor,id);							//get the closest-site to tx,ty into voroid.x,.y
+	  short2 voroid = tex1Dfetch<short2>(pbaTexColor,id);							//get the closest-site to tx,ty into voroid.x,.y
 	  int    id2    = TOID(voroid.x,voroid.y,size);							//convert the site's coord to an index into pbaTexParam[], the site-label-texture
-	  float  imp    = tex1Dfetch(pbaTexParam,id2);							//get the site's label
+	  float  imp    = tex1Dfetch<float>(pbaTexParam,id2);							//get the site's label
 	  float  d2     = (tx-voroid.x)*(tx-voroid.x)+(ty-voroid.y)*(ty-voroid.y);
 	  float  dt     = sqrtf(d2);											//save the Euclidean DT
 
 	         ++id;															//TOID(tx+1,ty,size)
-	         voroid = tex1Dfetch(pbaTexColor,id);							//
+	         voroid = tex1Dfetch<short2>(pbaTexColor,id);							//
 	         id2    = TOID(voroid.x,voroid.y,size);							//
-	  float  imp_r  = tex1Dfetch(pbaTexParam,id2);							//
+	  float  imp_r  = tex1Dfetch<float>(pbaTexParam,id2);							//
 
 	         id     += size-1;												//TOID(tx,ty+1,size)
-	         voroid = tex1Dfetch(pbaTexColor,id);							//
+	         voroid = tex1Dfetch<short2>(pbaTexColor,id);							//
 	         id2    = TOID(voroid.x,voroid.y,size);							//
-	  float  imp_u  = tex1Dfetch(pbaTexParam,id2);							//
+	  float  imp_u  = tex1Dfetch<float>(pbaTexParam,id2);							//
 
       float imp_dx  = fabsf(imp_r-imp);
 	  float imp_dy  = fabsf(imp_u-imp);
@@ -339,7 +476,8 @@ __device__ unsigned int topo_gc			= 0;
 __device__ unsigned int topo_gc_last	= 0;
 
 
-__global__ void kernelTopology(unsigned char* output, short2* output_set, short xm, short ym, short xM, short yM, short size, int maxpts)	
+__global__ void kernelTopology(unsigned char* output, short2* output_set, short xm, short ym, short xM, short yM, short size, int maxpts,
+	cudaTextureObject_t pbaTexGray)	
 {
 	const int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	const int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -349,7 +487,7 @@ __global__ void kernelTopology(unsigned char* output, short2* output_set, short 
 	if (tx>xm && ty>ym && tx<xM-1 && ty<yM-1)									//careful not to index outside the image; take into account the template size too
 	{	
 	   int    id = TOID(tx, ty, size);	 
-	   unsigned char  p  = tex1Dfetch(pbaTexGray,id);							//get the skeleton pixel at tx,ty
+	   unsigned char  p  = tex1Dfetch<unsigned char>(pbaTexGray,id);							//get the skeleton pixel at tx,ty
 	   if (p)																	//if the pixel isn't skeleton, nothing to do
 	   {
 	     unsigned char idx=0;
@@ -357,7 +495,7 @@ __global__ void kernelTopology(unsigned char* output, short2* output_set, short 
 		 {
 		   int id = TOID(tx-1, j, size);
 	       for(int i=0;i<=2;++i,++id,++idx)
-		      t[idx] = tex1Dfetch(pbaTexGray,id);								//get the 3x3 template centered at the skel point tx,ty
+		      t[idx] = tex1Dfetch<unsigned char>(pbaTexGray,id);								//get the 3x3 template centered at the skel point tx,ty
 		 }
 		  
 		 for(unsigned char r=0;r<4;++r)											//try to match all rotations of a pattern:
@@ -400,10 +538,6 @@ void skelft2DParams(int floodBand_, int maurerBand_, int colorBand_)		//Set up s
   colorBand   = colorBand_;
 }
 
-
-
-
-
 // Compute 2D FT / Voronoi diagram of a set of sites
 // siteParam:   Site parameterization. 0 = non-site points; >0 = site parameter value.
 // output:		FT. The (x,y) at (i,j) are the coords of the closest site to (i,j)
@@ -420,7 +554,9 @@ void skelft2DFT(short* output, float* siteParam, short xm, short ym, short xM, s
 
 
 
-__global__ void Interpolation(float* output, int size, int curr_bound_value, int prev_bound_value, bool firstL, int last_layer)							//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
+__global__ void Interpolation(float* output, int size, int curr_bound_value, int prev_bound_value, bool firstL, int last_layer,
+	cudaTextureObject_t curr_site_tex, cudaTextureObject_t prev_site_tex, 
+	cudaTextureObject_t curr_dt_tex, cudaTextureObject_t prev_dt_tex)							//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
 {																							//REMARK: we interpret 'inputVoro' as a 2D texture, as it's much easier/faster like this
 	int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -428,10 +564,10 @@ __global__ void Interpolation(float* output, int size, int curr_bound_value, int
     if (tx<size && ty<size)																	//Careful not to go outside the image..
 	{
 	  int i = TOID(tx,ty,size);
-	  float curr_val = tex1Dfetch(curr_site_tex,i);	
-	  float prev_val = tex1Dfetch(prev_site_tex,i);	
-	  float curr_dt = tex1Dfetch(curr_dt_tex,i);	
-	  float prev_dt = tex1Dfetch(prev_dt_tex,i);
+	  float curr_val = tex1Dfetch<float>(curr_site_tex,i);	
+	  float prev_val = tex1Dfetch<float>(prev_site_tex,i);	
+	  float curr_dt = tex1Dfetch<float>(curr_dt_tex,i);	
+	  float prev_dt = tex1Dfetch<float>(prev_dt_tex,i);
 	  if(firstL){
 		  output[i] = prev_bound_value;//clear_color
 	  }
@@ -466,28 +602,34 @@ void Interp(float* output, float* curr_site, float* prev_site, float* curr_dt, f
 	cudaMemcpy(curr_dt_, curr_dt, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(prev_dt_, prev_dt, pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyHostToDevice);
 	
-	cudaBindTexture(0, curr_site_tex, curr_site_);
-	cudaBindTexture(0, prev_site_tex, prev_site_);
-	cudaBindTexture(0, curr_dt_tex, curr_dt_);
-	cudaBindTexture(0, prev_dt_tex, prev_dt_);
+	// cudaBindTexture(0, curr_site_tex, curr_site_);
+	// cudaBindTexture(0, prev_site_tex, prev_site_);
+	// cudaBindTexture(0, curr_dt_tex, curr_dt_);
+	// cudaBindTexture(0, prev_dt_tex, prev_dt_);
+
+	curr_site_tex = createTexObjFloat((void*)curr_site_, pbaTexSize*pbaTexSize);
+	prev_site_tex = createTexObjFloat((void*)prev_site_, pbaTexSize*pbaTexSize);
+	curr_dt_tex = createTexObjFloat((void*)curr_dt_, pbaTexSize*pbaTexSize);
+	prev_dt_tex = createTexObjFloat((void*)prev_dt_, pbaTexSize*pbaTexSize);
 
 	dim3 block = dim3(BLOCKX,BLOCKY);
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 	
-	Interpolation<<<grid,block>>>((float*)pbaTextures[7], pbaTexSize, curr_bound_value, prev_bound_value, firstL, last_layer);
+	Interpolation<<<grid,block>>>((float*)pbaTextures[7], pbaTexSize, curr_bound_value, prev_bound_value, firstL, last_layer,
+		curr_site_tex, prev_site_tex, curr_dt_tex, prev_dt_tex);
 
-	cudaUnbindTexture(curr_site_tex);
-	cudaUnbindTexture(prev_site_tex);
-	cudaUnbindTexture(curr_dt_tex);
-	cudaUnbindTexture(prev_dt_tex);
+	// cudaUnbindTexture(curr_site_tex);
+	// cudaUnbindTexture(prev_site_tex);
+	// cudaUnbindTexture(curr_dt_tex);
+	// cudaUnbindTexture(prev_dt_tex);
+	cudaDestroyTextureObject(curr_site_tex);
+	cudaDestroyTextureObject(prev_site_tex);
+	cudaDestroyTextureObject(curr_dt_tex);
+	cudaDestroyTextureObject(prev_dt_tex);
+	
 	//Copy to CPU
 	cudaMemcpy(output, pbaTextures[7], pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyDeviceToHost);
-	
 }
-
-
-
-
 
 void skelft2DDT(short* outputDT, float threshold,								//Compute (thresholded) DT (into pbaTextures[2]) from resident FT (in pbaTextures[1])	
 					  short xm, short ym, short xM, short yM)
@@ -495,7 +637,8 @@ void skelft2DDT(short* outputDT, float threshold,								//Compute (thresholded)
 	dim3 block = dim3(BLOCKX,BLOCKY);
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 
-    cudaBindTexture(0, pbaTexColor, pbaTextures[1]);							//Used to read the FT from
+    // cudaBindTexture(0, pbaTexColor, pbaTextures[1]);							//Used to read the FT from
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[1], pbaTexSize*pbaTexSize);
 
 	if (threshold>=0)
 	{
@@ -504,8 +647,10 @@ void skelft2DDT(short* outputDT, float threshold,								//Compute (thresholded)
 	  xM += threshold; if (xM>pbaTexSize-1) xM=pbaTexSize-1;
 	  yM += threshold; if (yM>pbaTexSize-1) yM=pbaTexSize-1;
 	
-      kernelThresholdDT<<< grid, block >>>((unsigned char*)pbaTextures[2], pbaTexSize, threshold*threshold, xm-1, ym-1, xM+1, yM+1);    
-      cudaUnbindTexture(pbaTexColor);
+      kernelThresholdDT<<< grid, block >>>((unsigned char*)pbaTextures[2], pbaTexSize, threshold*threshold, xm-1, ym-1, xM+1, yM+1,
+	  	pbaTexColor);    
+    //   cudaUnbindTexture(pbaTexColor);
+	  cudaDestroyTextureObject(pbaTexColor);
 	
 	  //Copy thresholded image to CPU
 	  if (outputDT) cudaMemcpy(outputDT, (unsigned char*)pbaTextures[2], pbaTexSize * pbaTexSize * sizeof(unsigned char), cudaMemcpyDeviceToHost);
@@ -513,8 +658,9 @@ void skelft2DDT(short* outputDT, float threshold,								//Compute (thresholded)
 	else
 	{
 	  xm = ym = 0; xM = yM = pbaTexSize-1;
-	  kernelDT <<< grid, block >>>((short*)pbaTextures[2], pbaTexSize, threshold*threshold, xm-1, ym-1, xM+1, yM+1);
-      cudaUnbindTexture(pbaTexColor);
+	  kernelDT <<< grid, block >>>((short*)pbaTextures[2], pbaTexSize, threshold*threshold, xm-1, ym-1, xM+1, yM+1, pbaTexColor);
+    //   cudaUnbindTexture(pbaTexColor);
+	  cudaDestroyTextureObject(pbaTexColor);
 	  //Copy thresholded image to CPU
 	  if (outputDT) cudaMemcpy(outputDT, pbaTextures[2], pbaTexSize * pbaTexSize * sizeof(short), cudaMemcpyDeviceToHost);
 	}
@@ -529,14 +675,20 @@ void skelft2DSkeleton(float* outputSkel, bool* fg, float length, float threshold
 	dim3 block = dim3(BLOCKX,BLOCKY);											//threshold:  skeleton importance min-value (below this, we ignore branches)
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 	
-    cudaBindTexture(0, pbaTexColor, pbaTextures[1]);							//Used to read the resident FT
-	cudaBindTexture(0, pbaTexParam, pbaTexSiteParam);							//Used to read the resident boundary parameterization	
-	cudaMemset(pbaTextures[3],0,sizeof(float)*pbaTexSize*pbaTexSize);	//Faster to zero result and then fill only 1-values (see kernel)
+    // cudaBindTexture(0, pbaTexColor, pbaTextures[1]);							//Used to read the resident FT
+	// cudaBindTexture(0, pbaTexParam, pbaTexSiteParam);							//Used to read the resident boundary parameterization	
+	cudaMemset(pbaTextures[3],0,sizeof(float)*pbaTexSize*pbaTexSize);	//Faster to zero result and then fill only 1-values (see kernel)	
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[1], pbaTexSize*pbaTexSize);
+	pbaTexParam = createTexObjFloat((void*)pbaTexSiteParam, pbaTexSize*pbaTexSize);
 	
-    kernelSkel<<< grid, block >>>((float*)pbaTextures[3], fg, xm, ym, xM-1, yM-1, pbaTexSize, threshold, length);
+    kernelSkel<<< grid, block >>>((float*)pbaTextures[3], fg, xm, ym, xM-1, yM-1, pbaTexSize, threshold, length, pbaTexColor,
+		pbaTexParam);
 	
-    cudaUnbindTexture(pbaTexColor);
-	cudaUnbindTexture(pbaTexParam);
+    // cudaUnbindTexture(pbaTexColor);
+	// cudaUnbindTexture(pbaTexParam);
+
+	cudaDestroyTextureObject(pbaTexColor);
+	cudaDestroyTextureObject(pbaTexParam);
 	
 	//Copy skeleton to CPU
 	if (outputSkel) cudaMemcpy(outputSkel, pbaTextures[3], pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyDeviceToHost);
@@ -553,15 +705,17 @@ void skelft2DTopology(unsigned char* outputTopo, int* npts, short* outputPoints,
 	dim3 block = dim3(BLOCKX,BLOCKY);
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 	
-    cudaBindTexture(0, pbaTexGray, pbaTextures[3]);								//Used to read the resident skeleton
+    // cudaBindTexture(0, pbaTexGray, pbaTextures[3]);								//Used to read the resident skeleton
 	cudaMemset(pbaTextures[4],0,sizeof(unsigned char)*pbaTexSize*pbaTexSize);	//Faster to zero result and then fill only 1-values (see kernel)
+	pbaTexGray = createTexObjShort2((void*)pbaTextures[3], pbaTexSize*pbaTexSize);
 
     unsigned int zero = 0;
 	cudaMemcpyToSymbol(topo_gc,&zero,sizeof(unsigned int),0,cudaMemcpyHostToDevice);		//Set topo_gc to 0
 
-    kernelTopology<<< grid, block >>>((unsigned char*)pbaTextures[4], pbaTextures[5], xm, ym, xM, yM, pbaTexSize, maxpts+1);
+    kernelTopology<<< grid, block >>>((unsigned char*)pbaTextures[4], pbaTextures[5], xm, ym, xM, yM, pbaTexSize, maxpts+1, pbaTexGray);
 	
-    cudaUnbindTexture(pbaTexGray);
+    //cudaUnbindTexture(pbaTexGray);
+	cudaDestroyTextureObject(pbaTexGray);
 
 	if (outputPoints && maxpts)													//If output-point vector desired, copy the end-points, put in pbaTexture[5] as a vector of short2's, 
 	{																			//into caller space. We copy only 'maxpts' elements, as the user instructed us.
@@ -579,7 +733,8 @@ void skelft2DTopology(unsigned char* outputTopo, int* npts, short* outputPoints,
 
 
 
-__global__ void kernelSiteFromSkeleton(short2* outputSites, int size)						//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
+__global__ void kernelSiteFromSkeleton(short2* outputSites, int size, 
+	cudaTextureObject_t pbaTexGray)						//Initialize the Voronoi textures from the sites' encoding texture (parameterization)
 {																							//REMARK: we interpret 'inputVoro' as a 2D texture, as it's much easier/faster like this
 	int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -587,7 +742,7 @@ __global__ void kernelSiteFromSkeleton(short2* outputSites, int size)						//Ini
     if (tx<size && ty<size)																	//Careful not to go outside the image..
 	{
 	  int i = TOID(tx,ty,size);
-	  unsigned char param = tex1Dfetch(pbaTexGray,i);										//The sites-param has non-zero (parameter) values precisely on non-boundary points
+	  unsigned char param = tex1Dfetch<unsigned char>(pbaTexGray,i);										//The sites-param has non-zero (parameter) values precisely on non-boundary points
 
 	  short2& v = outputSites[i];
 	  v.x = v.y = MARKER;																	//Non-boundary points are marked as 0 in the parameterization. Here we will compute the FT.
@@ -601,7 +756,8 @@ __global__ void kernelSiteFromSkeleton(short2* outputSites, int size)						//Ini
 
 
 
-__global__ void kernelSkelInterpolate(float* output, int size)
+__global__ void kernelSkelInterpolate(float* output, int size, cudaTextureObject_t pbaTexColor,
+	cudaTextureObject_t pbaTexColor2)
 {
 	int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -609,9 +765,9 @@ __global__ void kernelSkelInterpolate(float* output, int size)
     if (tx<size && ty<size)																	//Careful not to go outside the image..
 	{
   	  int    id     = TOID(tx, ty, size);
-	  short2 vid    = tex1Dfetch(pbaTexColor,id);							
+	  short2 vid    = tex1Dfetch<short2>(pbaTexColor,id);							
 	  float  T      = sqrtf((tx-vid.x)*(tx-vid.x)+(ty-vid.y)*(ty-vid.y));
-	  short2 vid2   = tex1Dfetch(pbaTexColor2,id);							
+	  short2 vid2   = tex1Dfetch<short2>(pbaTexColor2,id);							
 	  float  D      = sqrtf((tx-vid2.x)*(tx-vid2.x)+(ty-vid2.y)*(ty-vid2.y));
 	  //float  B      = ((D)? min(T/2/D,0.5f):0.5) + 0.5*((T)? max(1-D/T,0.0f):0);
 	  float  B      = ((D)? (T/2/D<0.5f)? T/2/D : 0.5f : 0.5) + 0.5*((T)? (1-D/T<0.0f)? 0.0f : (1-D/T):0);
@@ -628,10 +784,14 @@ void skel2DSkeletonDT(float* outputSkelDT,short xm,short ym,short xM,short yM)
 	dim3 block = dim3(BLOCKX,BLOCKY);
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 
-    cudaBindTexture(0,pbaTexGray,pbaTextures[3]);							//Used to read the resident binary skeleton
-    kernelSiteFromSkeleton<<<grid,block>>>(pbaTextures[0],pbaTexSize);		//1. Init pbaTextures[0] with sites on skeleton i.e. from pbaTexGray
-	cudaUnbindTexture(pbaTexGray);
-		
+    // cudaBindTexture(0,pbaTexGray,pbaTextures[3]);							//Used to read the resident binary skeleton
+    // kernelSiteFromSkeleton<<<grid,block>>>(pbaTextures[0],pbaTexSize);		//1. Init pbaTextures[0] with sites on skeleton i.e. from pbaTexGray
+	// cudaUnbindTexture(pbaTexGray);
+	pbaTexGray = createTexObjShort2((void*)pbaTextures[3], pbaTexSize*pbaTexSize);
+	kernelSiteFromSkeleton<<<grid,block>>>(pbaTextures[0],pbaTexSize, pbaTexGray);
+	cudaDestroyTextureObject(pbaTexGray);
+
+
 	//!!Must first save pbaTextures[1] since we may need it later..
 	cudaMemcpy(pbaTextures[5],pbaTextures[1],pbaTexSize*pbaTexSize*sizeof(short2),cudaMemcpyDeviceToDevice);
     skel2DFTCompute(xm, ym, xM, yM, floodBand, maurerBand, colorBand);		//2. Compute FT of the skeleton into pbaTextures[6]
@@ -639,11 +799,17 @@ void skel2DSkeletonDT(float* outputSkelDT,short xm,short ym,short xM,short yM)
     cudaMemcpy(pbaTextures[1],pbaTextures[5],pbaTexSize*pbaTexSize*sizeof(short2),cudaMemcpyDeviceToDevice);
     
 	//Compute interpolation		
-    cudaBindTexture(0,pbaTexColor,pbaTextures[1]);							// FT of boundary
-    cudaBindTexture(0,pbaTexColor2,pbaTextures[6]);							// FT of skeleton
-	kernelSkelInterpolate<<<grid,block>>>((float*)pbaTextures[0],pbaTexSize);
-	cudaUnbindTexture(pbaTexColor);
-	cudaUnbindTexture(pbaTexColor2);
+    // cudaBindTexture(0,pbaTexColor,pbaTextures[1]);							// FT of boundary
+    // cudaBindTexture(0,pbaTexColor2,pbaTextures[6]);							// FT of skeleton
+	// kernelSkelInterpolate<<<grid,block>>>((float*)pbaTextures[0],pbaTexSize);
+	// cudaUnbindTexture(pbaTexColor);
+	// cudaUnbindTexture(pbaTexColor2);
+	pbaTexColor = createTexObjShort2((void*)pbaTextures[1], pbaTexSize*pbaTexSize);
+	pbaTexColor2 = createTexObjShort2((void*)pbaTextures[6], pbaTexSize*pbaTexSize);
+	kernelSkelInterpolate<<<grid,block>>>((float*)pbaTextures[0],pbaTexSize, pbaTexColor, pbaTexColor2);
+	cudaDestroyTextureObject(pbaTexColor);
+	cudaDestroyTextureObject(pbaTexColor2);
+
 	if (outputSkelDT) cudaMemcpy(outputSkelDT, pbaTextures[0], pbaTexSize * pbaTexSize * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
@@ -652,10 +818,14 @@ void skel2DSkeletonFT(short* outputSkelFT,short xm,short ym,short xM,short yM)
 	dim3 block = dim3(BLOCKX,BLOCKY);
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 
-    cudaBindTexture(0,pbaTexGray,pbaTextures[3]);							//Used to read the resident binary skeleton
-    kernelSiteFromSkeleton<<<grid,block>>>(pbaTextures[0],pbaTexSize);		//1. Init pbaTextures[0] with sites on skeleton i.e. from pbaTexGray
-	cudaUnbindTexture(pbaTexGray);
+    // cudaBindTexture(0,pbaTexGray,pbaTextures[3]);							//Used to read the resident binary skeleton
+    // kernelSiteFromSkeleton<<<grid,block>>>(pbaTextures[0],pbaTexSize);		//1. Init pbaTextures[0] with sites on skeleton i.e. from pbaTexGray
+	// cudaUnbindTexture(pbaTexGray);
 		
+	pbaTexGray = createTexObjShort2((void*)pbaTextures[3], pbaTexSize*pbaTexSize);
+	kernelSiteFromSkeleton<<<grid,block>>>(pbaTextures[0],pbaTexSize, pbaTexGray);
+	cudaDestroyTextureObject(pbaTexGray);
+
 	//!!Must first save pbaTextures[1] since we may need it later..
 	cudaMemcpy(pbaTextures[5],pbaTextures[1],pbaTexSize*pbaTexSize*sizeof(short2),cudaMemcpyDeviceToDevice);
     skel2DFTCompute(xm, ym, xM, yM, floodBand, maurerBand, colorBand);		//2. Compute FT of the skeleton into pbaTextures[6]
@@ -669,7 +839,8 @@ void skel2DSkeletonFT(short* outputSkelFT,short xm,short ym,short xM,short yM)
 __device__  bool fill_gc;														//Indicates if a fill-sweep did fill anything or not
 
 
-__global__ void kernelFill(unsigned char* output, int size, unsigned char bg, unsigned char fg, short xm, short ym, short xM, short yM, bool ne)
+__global__ void kernelFill(unsigned char* output, int size, unsigned char bg, unsigned char fg, short xm, short ym, short xM, short yM, bool ne,
+	cudaTextureObject_t pbaTexGray)
 {
 	int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -677,7 +848,7 @@ __global__ void kernelFill(unsigned char* output, int size, unsigned char bg, un
 	if (tx>xm && ty>ym && tx<xM && ty<yM)										//careful not to index outside the image..
 	{	
 	  int    id0 = TOID(tx, ty, size);
-	  unsigned char val = tex1Dfetch(pbaTexGray,id0);							//
+	  unsigned char val = tex1Dfetch<unsigned char>(pbaTexGray,id0);							//
 	  if (val==fg)																//do we have a filled pixel? Then fill all to left/top/up/bottom of it which is background
 	  {
 	    bool fill = false;
@@ -687,14 +858,14 @@ __global__ void kernelFill(unsigned char* output, int size, unsigned char bg, un
 			for(short x=tx+1;x<xM;++x)											//REMARK: here and below, the interesting thing is that it's faster, by about 10-15%, to fill a whole
 			{																	//        scanline rather than oly until the current block's borders (+1). The reason is that filling a whole
 																				//		  scanline decreases the total #sweeps, which seems to be the limiting speed factor
-			  if (tex1Dfetch(pbaTexGray,++id)!=bg) break;
+			  if (tex1Dfetch<unsigned char>(pbaTexGray,++id)!=bg) break;
 			  output[id] = fg; fill = true;
 			}
 
 			id = id0;
 			for(short y=ty-1;y>ym;--y)
 			{
-			  if (tex1Dfetch(pbaTexGray,id-=size)!=bg) break;
+			  if (tex1Dfetch<unsigned char>(pbaTexGray,id-=size)!=bg) break;
 			  output[id] = fg; fill = true;
 			}
 		}
@@ -702,14 +873,14 @@ __global__ void kernelFill(unsigned char* output, int size, unsigned char bg, un
 		{
 			for(short x=tx-1;x>xm;--x)
 			{
-			  if (tex1Dfetch(pbaTexGray,--id)!=bg) break;
+			  if (tex1Dfetch<unsigned char>(pbaTexGray,--id)!=bg) break;
 			  output[id] = fg; fill = true;
 			}
 
 			id = id0;
 			for(short y=ty+1;y<yM;++y)
 			{
-			  if (tex1Dfetch(pbaTexGray,id+=size)!=bg) break;
+			  if (tex1Dfetch<unsigned char>(pbaTexGray,id+=size)!=bg) break;
 			  output[id] = fg; fill = true;
 			}
 		}
@@ -720,10 +891,8 @@ __global__ void kernelFill(unsigned char* output, int size, unsigned char bg, un
     }
 }
 
-
-
-
-__global__ void kernelFillHoles(unsigned char* output, int size, unsigned char bg, unsigned char fg, unsigned char fill_fg)
+__global__ void kernelFillHoles(unsigned char* output, int size, unsigned char bg, unsigned char fg, unsigned char fill_fg,
+	cudaTextureObject_t pbaTexGray)
 {
 	int tx = blockIdx.x * blockDim.x + threadIdx.x;
 	int ty = blockIdx.y * blockDim.y + threadIdx.y;
@@ -731,7 +900,7 @@ __global__ void kernelFillHoles(unsigned char* output, int size, unsigned char b
 	if (tx>=0 && ty>=0 && tx<size && ty<size)									//careful not to index outside the image..
 	{	
   	  int            id = TOID(tx, ty, size);
-	  unsigned char val = tex1Dfetch(pbaTexGray,id);							//
+	  unsigned char val = tex1Dfetch<unsigned char>(pbaTexGray,id);							//
 	  if (val==fill_fg)
 	     output[id] = bg;
 	  else if (val==bg)
@@ -751,7 +920,8 @@ int skelft2DFill(unsigned char* outputFill, short sx, short sy, short xm, short 
 	
 	cudaMemset(((unsigned char*)pbaTextures[2])+id,fill_value,sizeof(unsigned char));					//Fill the seed (x,y) on the GPU	
 
-	cudaBindTexture(0, pbaTexGray, pbaTextures[2]);														//Used to read the thresholded DT
+	// cudaBindTexture(0, pbaTexGray, pbaTextures[2]);														//Used to read the thresholded DT
+	pbaTexGray = createTexObjShort2((void*)pbaTextures[2], pbaTexSize*pbaTexSize);
 
 	int iter=0;
 	bool xy = true;																						//Direction of filling for current sweep: either north-east or south-west
@@ -760,12 +930,13 @@ int skelft2DFill(unsigned char* outputFill, short sx, short sy, short xm, short 
 	{	
 	   bool filled = false;																				//Initialize flag: we didn't fill anything in this sweep
 	   cudaMemcpyToSymbol(fill_gc,&filled,sizeof(bool),0,cudaMemcpyHostToDevice);						//Pass flag to CUDA
-       kernelFill<<<grid, block>>>((unsigned char*)pbaTextures[2],pbaTexSize,background,fill_value,xm,ym,xM,yM,xy);	
+       kernelFill<<<grid, block>>>((unsigned char*)pbaTextures[2],pbaTexSize,background,fill_value,xm,ym,xM,yM,xy, pbaTexGray);	
 																										//One fill sweep	   
 	   cudaMemcpyFromSymbol(&filled,fill_gc,sizeof(bool),0,cudaMemcpyDeviceToHost);						//See if we filled anything in this sweep
 	   if (!filled) break;																				//Nothing filled? Then we're done, the image didn't change
 	}
-	cudaUnbindTexture(pbaTexGray);
+	//cudaUnbindTexture(pbaTexGray);
+	cudaDestroyTextureObject(pbaTexGray);
 		
 	if (outputFill) cudaMemcpy(outputFill, (unsigned char*)pbaTextures[2], pbaTexSize * pbaTexSize * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 	
@@ -787,11 +958,13 @@ int skelft2DFillHoles(unsigned char* outputFill, short sx, short sy, unsigned ch
 	dim3 grid  = dim3(pbaTexSize/block.x,pbaTexSize/block.y);
 	
 
-    cudaBindTexture(0, pbaTexGray, pbaTextures[2]);														//Used to read the thresholded DT
+    //cudaBindTexture(0, pbaTexGray, pbaTextures[2]);														//Used to read the thresholded DT
+	pbaTexGray = createTexObjShort2((void*)pbaTextures[2], pbaTexSize*pbaTexSize);
 
-    kernelFillHoles<<<grid, block>>>((unsigned char*)pbaTextures[2],pbaTexSize,background,foreground,fill_value);
+    kernelFillHoles<<<grid, block>>>((unsigned char*)pbaTextures[2],pbaTexSize,background,foreground,fill_value, pbaTexGray);
 
-    cudaUnbindTexture(pbaTexGray);
+    //cudaUnbindTexture(pbaTexGray);
+	cudaDestroyTextureObject(pbaTexGray);
 	
 	if (outputFill) cudaMemcpy(outputFill, (unsigned char*)pbaTextures[2], pbaTexSize * pbaTexSize * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 	

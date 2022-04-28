@@ -5,6 +5,38 @@
 #pragma once
 
 
+
+// Replacing CUDA Texture References to CUDA Texture Objects
+// Dênnis José da Silva, Univ. of Groningen, 2022
+
+// create Texture Object of type float
+// param:
+//   source:  pointer to the source of the texture
+//   texSize: texture size (number of texels)     
+//
+// output:   T
+//      The created CUDA texture object.
+cudaTextureObject_t createTexObjFloat(void *source, int texSize);
+
+// create Texture Object of type short2
+// param:
+//   source:  pointer to the source of the texture
+//   texSize: texture size (number of texels)     
+// 
+// output:   T
+//      The created CUDA texture object.
+cudaTextureObject_t createTexObjShort2(void *source, int texSize);
+
+// create Texture Object of type unsigned char
+// param:
+//   source:  pointer to the source of the texture
+//   texSize: texture size (number of texels)     
+// 
+// output:   T
+//      The created CUDA texture object.
+cudaTextureObject_t createTexObjUnsignedChar(void *source, int texSize);
+
+
 // Given an image of size nx x ny that we want to process, CUDA may need to use a larger image (e.g. pow 2) internally
 // to handle our image. This returns the size of this larger image. Since we get back data from CUDA at this size,
 // we need to know about the size to allocate all our app-side buffers.
